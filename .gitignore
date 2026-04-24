@@ -1,0 +1,16 @@
+# Environment Variables
+.env
+
+# Vector Database
+chroma_db/
+faiss_index/
+data/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Virtual Environments
+venv/
+env/
+.venv/
