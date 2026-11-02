@@ -5,6 +5,7 @@
 chroma_db/
 faiss_index/
 data/
+schedule.json
 
 # Python Cache
 __pycache__/

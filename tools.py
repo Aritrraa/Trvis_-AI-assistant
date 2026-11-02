@@ -1,9 +1,138 @@
 import os
+import json
 import subprocess
 import datetime
 import webbrowser
 from langchain_core.tools import tool
 from duckduckgo_search import DDGS
+
+SCHEDULE_FILE = "schedule.json"
+
+def _load_schedule():
+    if os.path.exists(SCHEDULE_FILE):
+        try:
+            with open(SCHEDULE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def _save_schedule(tasks):
+    try:
+        with open(SCHEDULE_FILE, "w", encoding="utf-8") as f:
+            json.dump(tasks, f, indent=4)
+        return True
+    except Exception as e:
+        print(f"Error saving schedule: {e}")
+        return False
+
+@tool
+def manage_schedule(action: str, details: str = "", task_id: int = 0) -> str:
+    """
+    Manages the user's daily schedule, agenda, reminders, and tasks.
+    Actions available:
+    - 'add': Add a new task/reminder/schedule item. Put description and time in 'details'.
+      Example: action='add', details='Meeting with Dr. Sarah at 3:00 PM tomorrow'
+    - 'list' or 'view': View all active schedule items and upcoming tasks.
+      Example: action='list'
+    - 'complete' or 'remove': Mark a task as done or delete it by task_id or matching keyword in details.
+      Example: action='complete', task_id=1
+    - 'clear': Delete all tasks in the schedule.
+    """
+    action = action.lower().strip()
+    tasks = _load_schedule()
+    
+    if action == "add":
+        if not details.strip():
+            return "Please provide the details or description of the schedule item to add."
+        
+        new_id = (max([t.get("id", 0) for t in tasks]) + 1) if tasks else 1
+        created_time = datetime.datetime.now().strftime("%Y-%m-%d %I:%M %p")
+        item = {
+            "id": new_id,
+            "task": details.strip(),
+            "status": "pending",
+            "created_at": created_time
+        }
+        tasks.append(item)
+        _save_schedule(tasks)
+        return f"Successfully added to your schedule: [Item #{new_id}] '{details.strip()}'."
+
+    elif action in ["list", "view", "check", "show"]:
+        if not tasks:
+            return "Your schedule is currently clear. There are no pending appointments or reminders."
+        
+        output = ["Here is your current schedule and task list:"]
+        for t in tasks:
+            status_tag = "[COMPLETED]" if t.get("status") == "completed" else "[PENDING]"
+            output.append(f"- #{t.get('id')}: {t.get('task')} {status_tag} (Recorded: {t.get('created_at')})")
+        return "\n".join(output)
+
+    elif action in ["complete", "done", "finish"]:
+        target = None
+        for t in tasks:
+            if task_id and t.get("id") == task_id:
+                target = t
+                break
+            if details and details.lower() in t.get("task", "").lower():
+                target = t
+                break
+        
+        if target:
+            target["status"] = "completed"
+            _save_schedule(tasks)
+            return f"Marked schedule item #{target.get('id')} ('{target.get('task')}') as completed."
+        return f"Could not find any matching schedule item to complete."
+
+    elif action in ["remove", "delete"]:
+        initial_len = len(tasks)
+        if task_id:
+            tasks = [t for t in tasks if t.get("id") != task_id]
+        elif details:
+            tasks = [t for t in tasks if details.lower() not in t.get("task", "").lower()]
+            
+        if len(tasks) < initial_len:
+            _save_schedule(tasks)
+            return "Successfully removed the specified item from your schedule."
+        return "Could not find the specified item to remove."
+
+    elif action == "clear":
+        _save_schedule([])
+        return "All schedule items and reminders have been cleared."
+
+    else:
+        return f"Unknown schedule action '{action}'. Valid actions are 'add', 'list', 'complete', 'remove', and 'clear'."
+
+@tool
+def read_project_file(filename: str) -> str:
+    """
+    Reads the contents of a local code or text file in the workspace.
+    Use this when the user asks you to inspect, review, or debug their code files.
+    """
+    filename = filename.strip()
+    if not os.path.exists(filename):
+        return f"File '{filename}' does not exist in the project directory."
+    try:
+        with open(filename, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        if len(content) > 4000:
+            content = content[:4000] + "\n... [Truncated for brevity]"
+        return f"Contents of {filename}:\n```\n{content}\n```"
+    except Exception as e:
+        return f"Error reading file '{filename}': {e}"
+
+@tool
+def list_project_files(path: str = ".") -> str:
+    """
+    Lists the files and folders in the current project workspace.
+    Useful when the user asks what files they have or when collaborating on project code.
+    """
+    try:
+        items = os.listdir(path)
+        visible = [item for item in items if not item.startswith(".")]
+        return "Project files and directories:\n" + "\n".join([f"- {i}" for i in visible])
+    except Exception as e:
+        return f"Error listing directory contents: {e}"
 
 @tool
 def open_application(app_name: str) -> str:
@@ -81,4 +210,12 @@ def play_on_youtube(search_query: str) -> str:
     return f"Opened YouTube search for: {search_query}"
 
 # List of all tools to bind to the agent
-get_all_tools = [open_application, get_system_time, search_web, play_on_youtube]
+get_all_tools = [
+    open_application, 
+    get_system_time, 
+    search_web, 
+    play_on_youtube,
+    manage_schedule,
+    read_project_file,
+    list_project_files
+]

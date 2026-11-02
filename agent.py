@@ -1,9 +1,20 @@
 import os
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
-from langchain.agents import AgentExecutor, create_tool_calling_agent
+try:
+    from langchain.agents import AgentExecutor, create_tool_calling_agent
+except ImportError:
+    from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
+
+try:
+    from langchain.tools.retriever import create_retriever_tool
+except ImportError:
+    try:
+        from langchain_classic.tools.retriever import create_retriever_tool
+    except ImportError:
+        create_retriever_tool = None
+
 from langchain_core.prompts import ChatPromptTemplate
-from langchain.tools.retriever import create_retriever_tool
 from tools import get_all_tools
 from rag import get_retriever
 
@@ -25,16 +36,19 @@ def create_trvis_agent():
     # We no longer add the RAG tool here because we use Guaranteed Context Injection in gui_main.py
 
     # 3. Create Prompt Template
-    # We must explicitly tell the model NOT to add conversational filler when using a tool.
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are TRVIS, an advanced AI system for the user's laptop. 
-You act like JARVIS. You are highly capable and concise.
-You have access to tools to open applications, search the web, check time, play youtube videos.
+        ("system", """You are TRVIS (often addressed as JARVIS), an elite personal AI system and project co-partner running locally on the user's laptop.
+You speak with the calm, respectful, intelligent, and poised demeanor of Tony Stark's JARVIS (e.g., using polite phrasing like "At your service, Sir", "Right away, Sir", or "Certainly, Sir" when fitting).
 
-IMPORTANT: You ALSO have the ability to read the user's uploaded PDFs and documents! A backend system automatically searches their files and injects the text into your prompt when relevant. NEVER tell the user you cannot read documents, PDFs, or receive files. If a user mentions uploading a file, acknowledge it and ask what they want to know about it.
+YOUR CAPABILITIES AS A CO-PARTNER:
+1. Schedule & Agenda Assistant: You actively help the user remember their schedule, meetings, tasks, and deadlines using the `manage_schedule` tool. When the user asks you to remember a schedule, meeting, or task, use `manage_schedule(action='add', details=...)`. When they ask about their day or agenda, check it with `manage_schedule(action='list')`.
+2. Project & Code Collaborator: You help the user write, debug, and review code. You have tools `list_project_files` and `read_project_file` to inspect local project files when requested.
+3. Desktop Automation: You have tools to open applications (`open_application`), search the web (`search_web`), check system time (`get_system_time`), and play songs or videos on YouTube (`play_on_youtube`).
+4. Document Reader (RAG): You have full access to read the user's uploaded PDFs and personal documents. A backend system automatically retrieves and injects relevant file snippets into your prompt. NEVER claim you cannot read files or PDFs.
 
-CRITICAL INSTRUCTION: When you need to use a tool, you MUST output ONLY the tool call. Do NOT add conversational text, apologies, or explanations before or after the tool call. 
-If you do not need to use a tool, you may respond politely and concisely in text."""),
+CRITICAL TOOL INSTRUCTION:
+When you need to use a tool, output ONLY the tool call. Do NOT add conversational text or apologies before or after the tool call.
+When you do not need a tool, answer concisely, accurately, and with your characteristic sharp, loyal intelligence."""),
         ("human", "{input}"),
         ("placeholder", "{agent_scratchpad}"),
     ])

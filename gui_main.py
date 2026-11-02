@@ -1,4 +1,5 @@
 import os
+import sys
 import threading
 import queue
 import time
@@ -53,8 +54,8 @@ try:
 except:
     pass
 '''
-                # Run the speech in a completely hidden background process
-                subprocess.run(["python", "-c", script], creationflags=subprocess.CREATE_NO_WINDOW)
+                # Run the speech in a completely hidden background process using the current python executable
+                subprocess.run([sys.executable, "-c", script], creationflags=subprocess.CREATE_NO_WINDOW)
             except Exception as e:
                 print(f"TTS Engine Error: {e}")
                 
@@ -62,6 +63,53 @@ except:
             
             if self.queue.empty():
                 self.app.after(0, self.app.set_idle)
+
+class WakeWordListener(threading.Thread):
+    """
+    Continuously listens in the background for the wake word ('Jarvis', 'Jarvis Jarvis', 'Hey Jarvis').
+    Automatically wakes up Trvis like Siri or Google Assistant without touching any buttons.
+    """
+    def __init__(self, app_reference):
+        super().__init__(daemon=True)
+        self.app = app_reference
+        self.recognizer = sr.Recognizer()
+        self.recognizer.energy_threshold = 300
+        self.recognizer.dynamic_energy_threshold = True
+
+    def run(self):
+        while True:
+            # If disabled or Trvis is already processing/speaking, sleep briefly
+            if not self.app.wake_word_enabled or self.app.is_busy:
+                time.sleep(0.4)
+                continue
+
+            try:
+                with sr.Microphone() as source:
+                    self.recognizer.adjust_for_ambient_noise(source, duration=0.2)
+                    audio = self.recognizer.listen(source, timeout=2.0, phrase_time_limit=4.5)
+
+                if not self.app.wake_word_enabled or self.app.is_busy:
+                    continue
+
+                try:
+                    heard_text = self.recognizer.recognize_google(audio).lower().strip()
+                except (sr.UnknownValueError, sr.RequestError):
+                    continue
+
+                # Check if wake word was spoken
+                wake_keys = ["jarvis", "travis", "trvis", "service", "java"]
+                if any(k in heard_text for k in wake_keys) and not self.app.is_busy:
+                    # Clean out the wake word to see if a command was spoken in the same sentence
+                    command_part = heard_text
+                    for k in ["hey jarvis", "jarvis jarvis", "jarvis", "hey travis", "travis travis", "travis", "trvis", "service"]:
+                        command_part = command_part.replace(k, "").strip()
+
+                    self.app.after(0, self.app.on_wake_word_detected, command_part)
+
+            except sr.WaitTimeoutError:
+                pass
+            except Exception as e:
+                time.sleep(0.5)
 
 class JarvisCore(tk.Canvas):
     def __init__(self, parent, size=160, **kwargs):
@@ -95,7 +143,7 @@ class JarvisCore(tk.Canvas):
 
     def update_status(self, status, color):
         self.color = color
-        if status in ["LISTENING", "PROCESSING", "SPEAKING", "INGESTING"]:
+        if status in ["LISTENING", "PROCESSING", "SPEAKING", "INGESTING", "WAKE DETECTED"]:
             self.is_active = True
         else:
             self.is_active = False
@@ -124,7 +172,28 @@ class TrvisGUI(ctk.CTk):
         self.jarvis_core.grid(row=0, column=0, pady=(15, 5))
         
         self.status_label = ctk.CTkLabel(self.core_frame, text="[ INITIALIZING ]", font=("Consolas", 16, "bold"), text_color=ACCENT_CYAN)
-        self.status_label.grid(row=1, column=0, pady=(0, 15))
+        self.status_label.grid(row=1, column=0, pady=(0, 5))
+
+        # Wake Word Status & Toggle Bar
+        self.wake_word_enabled = True
+        self.is_busy = False
+
+        self.controls_bar = ctk.CTkFrame(self.core_frame, fg_color="transparent")
+        self.controls_bar.grid(row=2, column=0, pady=(0, 12))
+
+        self.wake_toggle_btn = ctk.CTkButton(
+            self.controls_bar, 
+            text="WAKE WORD: ACTIVE (Say 'Jarvis Jarvis')", 
+            font=("Consolas", 12, "bold"),
+            height=30,
+            fg_color="#003344",
+            border_width=1,
+            border_color=ACCENT_CYAN,
+            text_color=ACCENT_CYAN,
+            hover_color="#004d66",
+            command=self.toggle_wake_word
+        )
+        self.wake_toggle_btn.pack(side="left", padx=5)
 
         # 2. Main Chat Display Panel
         self.chat_frame = ctk.CTkFrame(self, fg_color=PANEL_COLOR, corner_radius=15, border_width=1, border_color="#333333")
@@ -166,9 +235,13 @@ class TrvisGUI(ctk.CTk):
         self.tts_thread = TTSThread(self.tts_queue, self)
         self.tts_thread.start()
 
+        # Start Continuous Wake Word Listener ("Jarvis Jarvis" / "Jarvis")
+        self.wake_listener = WakeWordListener(self)
+        self.wake_listener.start()
+
         self.set_idle()
         
-        greeting = "Greetings. I am Trvis. Systems fully operational."
+        greeting = "Greetings Sir. Trvis systems online. You can say 'Jarvis Jarvis' at any time to summon me."
         self.type_chat("TRVIS", greeting)
         self.update_status("SPEAKING", ACCENT_MAGENTA)
         self.tts_queue.put(greeting)
@@ -209,6 +282,7 @@ class TrvisGUI(ctk.CTk):
         self.jarvis_core.update_status(status_text, color)
 
     def set_idle(self):
+        self.is_busy = False
         self.update_status("IDLE", ACCENT_CYAN)
         self.listen_button.configure(state="normal", text="AUDIO UPLINK")
         self.send_button.configure(state="normal")
@@ -216,10 +290,53 @@ class TrvisGUI(ctk.CTk):
         self.text_entry.configure(state="normal")
 
     def disable_inputs(self):
+        self.is_busy = True
         self.listen_button.configure(state="disabled")
         self.send_button.configure(state="disabled")
         self.upload_button.configure(state="disabled")
         self.text_entry.configure(state="disabled")
+
+    def toggle_wake_word(self):
+        self.wake_word_enabled = not self.wake_word_enabled
+        if self.wake_word_enabled:
+            self.wake_toggle_btn.configure(
+                text="WAKE WORD: ACTIVE (Say 'Jarvis Jarvis')",
+                fg_color="#003344",
+                border_color=ACCENT_CYAN,
+                text_color=ACCENT_CYAN
+            )
+            self.add_chat("SYSTEM", "Wake Word detection is ACTIVE. You can say 'Jarvis Jarvis' to summon me.")
+        else:
+            self.wake_toggle_btn.configure(
+                text="WAKE WORD: STANDBY (Click to Enable)",
+                fg_color="#222222",
+                border_color="#555555",
+                text_color="#888888"
+            )
+            self.add_chat("SYSTEM", "Wake Word detection is on STANDBY.")
+
+    def on_wake_word_detected(self, command=""):
+        if self.is_busy:
+            return
+
+        self.is_busy = True
+        self.update_status("WAKE DETECTED", "#ffd700") # Gold
+        self.add_chat("SYSTEM", "Wake phrase detected: 'Jarvis'")
+
+        if command and len(command.strip()) > 2:
+            # User spoke command directly with the wake word
+            self.disable_inputs()
+            self.add_chat("YOU", command)
+            self.update_status("PROCESSING", "#00e5ff")
+            threading.Thread(target=self.process_with_agent, args=(command,), daemon=True).start()
+        else:
+            # User said "Jarvis Jarvis" to wake up
+            ack = "At your service, Sir. What can I do for you?"
+            self.type_chat("TRVIS", ack)
+            self.update_status("SPEAKING", ACCENT_MAGENTA)
+            self.tts_queue.put(ack)
+            # Automatically start listening for their command after acknowledgment
+            self.after(1600, self.start_listening_thread)
         
     def upload_document(self):
         file_path = filedialog.askopenfilename(
