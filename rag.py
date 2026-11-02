@@ -1,61 +1,68 @@
 import os
 import shutil
+import threading
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, DirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # ------------------------------------------------------------------
-# CONFIGURATION
+# CONFIGURATION & THREAD SYNCHRONIZATION
 # ------------------------------------------------------------------
-# DB_DIR is the folder where our "Memory" (the vector database) will be saved.
 DB_DIR = "chroma_db"
-# DATA_DIR is the folder where we will store the raw PDF and Text files.
 DATA_DIR = "data"
 
-# We use a global variable so we don't have to load the database multiple times.
+# Thread-safe re-entrant lock to prevent race conditions during background logging
+_rag_lock = threading.RLock()
 _vectorstore = None
+_embeddings = None
 
 def get_embeddings():
     """
-    Embeddings are how AI understands text. It converts sentences into numbers.
-    We are using a small, beginner-friendly model called 'all-MiniLM-L6-v2'.
-    It is very fast and doesn't require a giant download.
+    Cached, thread-safe embeddings model. Uses explicit CPU allocation
+    to prevent PyTorch meta tensor race conditions when threads initialize.
     """
-    return HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    global _embeddings
+    if _embeddings is not None:
+        return _embeddings
+        
+    with _rag_lock:
+        if _embeddings is None:
+            _embeddings = HuggingFaceEmbeddings(
+                model_name="all-MiniLM-L6-v2",
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"normalize_embeddings": True}
+            )
+        return _embeddings
 
 def get_vectorstore():
     """
-    This function gets our database ready. 
-    If the database already exists on the computer, it loads it.
-    If it doesn't exist, it creates a new empty one.
+    Thread-safe database getter.
     """
     global _vectorstore
-    
-    # If we already loaded it during this run, just return it
     if _vectorstore is not None:
         return _vectorstore
         
-    # Make sure the 'data' folder exists
-    os.makedirs(DATA_DIR, exist_ok=True)
-    
-    # Check if the database folder already exists
-    if os.path.exists(DB_DIR):
-        print("Loading existing Chroma database...")
-        _vectorstore = Chroma(persist_directory=DB_DIR, embedding_function=get_embeddings())
-    else:
-        print("Creating a new Chroma database...")
-        # We start with a tiny dummy document just to create the database structure
-        _vectorstore = Chroma.from_texts(
-            texts=["TRVIS Memory Initialized."], 
-            embedding=get_embeddings(),
-            persist_directory=DB_DIR
-        )
+    with _rag_lock:
+        if _vectorstore is not None:
+            return _vectorstore
+            
+        os.makedirs(DATA_DIR, exist_ok=True)
+        embeddings = get_embeddings()
         
-        # Read any files that might already be in the data folder
-        ingest_all_documents()
-        
-    return _vectorstore
+        if os.path.exists(DB_DIR):
+            print("Loading existing Chroma database...")
+            _vectorstore = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
+        else:
+            print("Creating a new Chroma database...")
+            _vectorstore = Chroma.from_texts(
+                texts=["TRVIS Memory Initialized."], 
+                embedding=embeddings,
+                persist_directory=DB_DIR
+            )
+            ingest_all_documents()
+            
+        return _vectorstore
 
 def ingest_all_documents():
     """
@@ -138,14 +145,15 @@ def ingest_single_file(file_path):
 
 def add_to_memory(text):
     """
-    This function takes a simple text string (like a conversation)
-    and saves it permanently into the AI's database.
+    Safely saves a conversation snippet into long-term vector memory.
+    Synchronized with _rag_lock to prevent multi-threaded database corruption.
     """
-    global _vectorstore
-    if _vectorstore is None:
-        get_vectorstore()
-        
-    _vectorstore.add_texts([text])
+    try:
+        with _rag_lock:
+            vs = get_vectorstore()
+            vs.add_texts([text])
+    except Exception as e:
+        print(f"Memory logging skipped: {e}")
 
 def get_retriever():
     """

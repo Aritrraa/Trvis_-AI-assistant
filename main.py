@@ -1,4 +1,12 @@
 import os
+import sys
+
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 import pyttsx3
 import speech_recognition as sr
 from colorama import init, Fore, Style

@@ -1,4 +1,13 @@
 import os
+import sys
+
+# Ensure UTF-8 console output on Windows
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 try:
@@ -23,9 +32,9 @@ load_dotenv()
 
 def create_trvis_agent():
     # 1. Initialize the Groq LLM
-    # llama-3.3-70b-versatile handles tools best with temperature 0.0
+    # openai/gpt-oss-120b is active on your Groq tier and excels at tool calling
     llm = ChatGroq(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         temperature=0.0,
         max_retries=2
     )
@@ -62,7 +71,7 @@ When you do not need a tool, answer concisely, accurately, and with your charact
     agent_executor = AgentExecutor(
         agent=agent, 
         tools=tools, 
-        verbose=True,
+        verbose=False,
         handle_parsing_errors=True
     )
     
