@@ -200,6 +200,75 @@ def search_web(query: str) -> str:
         return f"Web search failed: {e}"
 
 @tool
+def search_news(topic: str = "technology") -> str:
+    """
+    Searches recent news headlines, articles, and summaries using DuckDuckGo News.
+    Use this when the user asks for latest news, breaking news, tech news, or current world events.
+    """
+    topic = topic.strip() if topic.strip() else "latest news"
+    results = None
+    
+    # Try dedicated news search first
+    try:
+        results = list(DDGS().news(topic, max_results=4))
+    except Exception:
+        pass
+        
+    # Seamless fallback to web search if news endpoint is throttled
+    if not results:
+        try:
+            results = list(DDGS().text(f"{topic} latest news headlines", max_results=4))
+        except Exception as e:
+            return f"News search encountered an issue: {e}"
+            
+    if not results:
+        return f"No news articles found for topic: '{topic}'."
+        
+    formatted = [f"--- Latest News for '{topic}' ---"]
+    for r in results:
+        title = r.get("title", "No Title")
+        source = r.get("source", "Web")
+        date = r.get("date", "")[:10] if r.get("date") else ""
+        body = r.get("body", "")
+        url = r.get("url") or r.get("href", "")
+        date_str = f" - {date}" if date else ""
+        formatted.append(f"• {title} ({source}{date_str})\n  {body}\n  Link: {url}")
+        
+    return "\n\n".join(formatted)
+
+@tool
+def create_file(file_path: str, content: str = "") -> str:
+    """
+    Creates or writes a file on the user's computer with the specified content.
+    Use this when the user asks you to write code, save a script, create a text file, or generate project files.
+    """
+    try:
+        file_path = file_path.strip().strip("'").strip('"')
+        parent_dir = os.path.dirname(file_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+            
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+            
+        return f"Successfully created file '{file_path}' ({len(content)} characters written)."
+    except Exception as e:
+        return f"Failed to create file '{file_path}': {e}"
+
+@tool
+def create_folder(folder_path: str) -> str:
+    """
+    Creates a new directory or folder in the project workspace.
+    Use this when the user asks to create a folder or directory structure.
+    """
+    try:
+        folder_path = folder_path.strip().strip("'").strip('"')
+        os.makedirs(folder_path, exist_ok=True)
+        return f"Successfully created directory '{folder_path}'."
+    except Exception as e:
+        return f"Failed to create directory '{folder_path}': {e}"
+
+@tool
 def play_on_youtube(search_query: str) -> str:
     """
     Searches YouTube and opens the browser to the search results or a video.
@@ -214,8 +283,11 @@ get_all_tools = [
     open_application, 
     get_system_time, 
     search_web, 
+    search_news,
     play_on_youtube,
     manage_schedule,
     read_project_file,
-    list_project_files
+    list_project_files,
+    create_file,
+    create_folder
 ]
